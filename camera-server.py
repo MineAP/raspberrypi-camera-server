@@ -3,9 +3,12 @@ import datetime
 import json
 import threading
 import traceback
+import subprocess
+import os
 from io import BytesIO
 from queue import Queue
 from time import sleep
+from pytz import utc
 
 from flask import Flask, Response, render_template
 from flask_restful import Api, Resource
@@ -108,7 +111,10 @@ def capture_image() -> bytes:
     pil_img.save(buffer, format='jpeg')
 
     # save image file for debug
-    pil_img.save('./tmp.jpeg', format='jpeg')
+    filepath = './tmp.jpg'
+    if os.path.exists(filepath):
+        os.remove(filepath)
+    pil_img.save(filepath, format='jpeg')
 
     return buffer.getvalue()
  
@@ -131,30 +137,75 @@ class Camera(Resource):
 
         # response base64 encoded jpeg image data
         data:dict = {
-            'timestamp': datetime.datetime.now().timestamp(),
+            'timestamp': datetime.datetime.now(tz=utc).timestamp(),
             'data': base64.b64encode(img).decode(encoding='utf-8')
         }
         print(str(data)[0:100])
         
         return data
 
+class CPU(Resource):
+    def get(self):
+        print('CPU.get()')
+
+        data:dict = {
+            'timestamp': datetime.datetime.now(tz=utc).timestamp(),
+            'data' : {
+                'cpu_clock' : get_cpu_clock(),
+                'cpu_temp' : get_cpu_temp()
+            }
+        }
+        print(str(data)[0:100])
+
+        return data
 
 @app.route('/camera/current.jpg')
 def current_img():
+    print('current_img()')
     # response jpeg image
     img:bytes = capture_image()
-    print(type(img))
     return Response(img, mimetype='image/jpeg')
 
 
 @app.route('/')
 def index():
-    return render_template("index.html")
+    print('index()')
+    temp = get_cpu_temp()
+    clock = get_cpu_clock()
+    return render_template("index.html", temp=temp, clock=clock)
+
+
+def get_cpu_temp() -> float:
+    print('get_cpu_temp()')
+    try:
+        cmd = ["vcgencmd", "measure_temp"]
+        res = subprocess.check_output(cmd)
+        temp = res.decode(encoding='utf-8').split('=')
+        temp_num = float(temp[1].replace("'C", ""))
+        return temp_num
+    except Exception as e:
+        print(e)
+        return 'N/A'
+
+
+def get_cpu_clock() -> float:
+    print('get_cpu_clock()')
+    try:
+        cmd = ["vcgencmd", "measure_clock", "arm"]
+        res:bytes = subprocess.check_output(cmd)
+        res = res.decode(encoding='utf-8').split('=')
+        clock_num = float(res[1])
+        clock_num = clock_num / (1000*1000)
+        return clock_num
+    except Exception as e:
+        print(e)
+        return 'N/A'
 
 
 def server_thread():
     print('server_thread()')
     api.add_resource(Camera, '/api/camera/')
+    api.add_resource(CPU, '/api/cpu/')
     app.run(host='0.0.0.0', port=5000)
 
 
@@ -169,7 +220,7 @@ if __name__ == "__main__":
 
     try:
         start_server_thread()
-        vs = PiVideoStream((640,480),5)
+        vs = PiVideoStream((1024,768),10)
         vs.start()
         while True:
             # メインスレッドでapp.run()すると、flaskによって？作られた

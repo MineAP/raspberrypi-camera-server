@@ -3,6 +3,18 @@
     <head>
     </head>
     <body>
+        <h2>CPU情報</h2>
+        <table>
+            <tr>
+                <td>温度：</td>
+                <td>{{ temp }} ℃</td>
+            </tr>
+            <tr>
+                <td>周波数：</td>
+                <td>{{ clock }} MHz</td>
+            </tr>
+        </table>
+        <h2>PiCamera画像</h2>
         <img src='/camera/current.jpg'>
     </body>
 </html>
