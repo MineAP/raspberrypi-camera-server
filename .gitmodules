@@ -1,0 +1,3 @@
+[submodule "DHT22_Python"]
+	path = DHT22_Python
+	url = https://github.com/MineAP/DHT22_Python.git

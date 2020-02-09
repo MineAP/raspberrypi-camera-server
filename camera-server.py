@@ -5,6 +5,7 @@ import threading
 import traceback
 import subprocess
 import os
+import RPi.GPIO as GPIO
 from io import BytesIO
 from queue import Queue
 from time import sleep
@@ -17,6 +18,8 @@ from PIL import Image
 from picamera import PiCamera
 from picamera.array import PiRGBArray
 
+from DHT22_Python.dht22 import DHT22
+
 '''
 Flaskを使ったRaspberryPi Camera画像配信サーバー
 '''
@@ -24,6 +27,13 @@ Flaskを使ったRaspberryPi Camera画像配信サーバー
 app:Flask = Flask(__name__)
 api:Api = Api(app)
 vs = None
+
+# initialize GPIO
+GPIO.setwarnings(True)
+GPIO.setmode(GPIO.BCM)
+
+# read data using pin 4
+instance = DHT22(pin=4)
 
 class PiVideoStream:
     '''
@@ -159,6 +169,23 @@ class CPU(Resource):
 
         return data
 
+class TemperatureAndHumidity(Resource):
+    def get(self):
+        print(f'TemperatureAndHumidity.get()')
+
+        room_temp = get_temperature_and_humidity()
+        data:dict = {
+            'timestamp': datetime.datetime.now(tz=utc).timestamp(),
+            'data' : {
+                'room_temperature': room_temp.temperature,
+                'room_humidity': room_temp.humidity
+            }
+        }
+        print(str(data)[0:100])
+
+        return data
+
+
 @app.route('/camera/current.jpg')
 def current_img():
     print('current_img()')
@@ -172,7 +199,10 @@ def index():
     print('index()')
     temp = get_cpu_temp()
     clock = get_cpu_clock()
-    return render_template("index.html", temp=temp, clock=clock)
+    room_temp = get_temperature_and_humidity()
+    return render_template("index.html", 
+        cpu_temp=temp, cpu_clock=clock,
+        room_temperature=room_temp.temperature , room_humidity=room_temp.humidity)
 
 
 def get_cpu_temp() -> float:
@@ -201,11 +231,21 @@ def get_cpu_clock() -> float:
         print(e)
         return 'N/A'
 
+def get_temperature_and_humidity():
+    print('get_temperature_and_humidity()')
+    try:
+        result = instance.read()
+        if result.is_valid():
+            return result
+    except Exception as e:
+        print(e)
+    return {temperature : 'N/A', humidity : 'N/A'}
 
 def server_thread():
     print('server_thread()')
     api.add_resource(Camera, '/api/camera/')
     api.add_resource(CPU, '/api/cpu/')
+    api.add_resource(TemperatureAndHumidity, '/api/temperatureandhumidity')
     app.run(host='0.0.0.0', port=5000)
 
 
@@ -234,3 +274,4 @@ if __name__ == "__main__":
         print(e)
     finally:
         camera_stop()
+        GPIO.cleanup()

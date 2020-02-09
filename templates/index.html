@@ -6,12 +6,23 @@
         <h2>CPU情報</h2>
         <table>
             <tr>
-                <td>温度：</td>
-                <td>{{ temp }} ℃</td>
+                <td>CPU温度：</td>
+                <td>{{ cpu_temp }} ℃</td>
             </tr>
             <tr>
-                <td>周波数：</td>
-                <td>{{ clock }} MHz</td>
+                <td>CPUクロック：</td>
+                <td>{{ cpu_clock }} MHz</td>
+            </tr>
+        </table>
+        <h2>温湿度センサー情報</h2>
+        <table>
+            <tr>
+                <td>温度：</td>
+                <td>{{ room_temperature }} ℃</td>
+            </tr>
+            <tr>
+                <td>湿度：</td>
+                <td>{{ room_humidity }} %</td>
             </tr>
         </table>
         <h2>PiCamera画像</h2>
