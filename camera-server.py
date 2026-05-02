@@ -8,16 +8,17 @@ import traceback
 from io import BytesIO
 from queue import Queue
 from time import sleep
+from typing import Optional
 
 from flask import Flask, Response, render_template
 from flask_restful import Api, Resource
 from PIL import Image
 from pytz import utc
 
-import RPi.GPIO as GPIO
-from DHT22_Python.dht22 import DHT22
-from picamera import PiCamera
-from picamera.array import PiRGBArray
+import adafruit_dht
+import board
+from picamera2 import Picamera2
+from libcamera import Transform
 
 '''
 Flaskを使ったRaspberryPi Camera画像配信サーバー
@@ -27,12 +28,18 @@ app: Flask = Flask(__name__)
 api: Api = Api(app)
 vs = None
 
-# initialize GPIO
-GPIO.setwarnings(True)
-GPIO.setmode(GPIO.BCM)
+# read DHT22 data using GPIO 4
+dht_device = adafruit_dht.DHT22(board.D4)
+dht_lock = threading.Lock()
 
-# read data using pin 4
-instance = DHT22(pin=4)
+
+class DHTReading:
+    def __init__(self, temperature, humidity):
+        self.temperature = temperature
+        self.humidity = humidity
+
+    def is_valid(self):
+        return self.temperature is not None and self.humidity is not None
 
 
 class PiVideoStream:
@@ -43,63 +50,42 @@ class PiVideoStream:
 
     def __init__(self, resolution=(320, 240), framerate=32):
         print(f'PiVideoStream.__init__()')
-        # initialize the camera and stream
-        self.camera = PiCamera()
-        self.camera.resolution = resolution
-        self.camera.framerate = framerate
-        self.rawCapture = PiRGBArray(self.camera, size=resolution)
-        self.stream = self.camera.capture_continuous(
-            self.rawCapture, format="rgb", use_video_port=True)
-        self.stopped = False
+        # initialize the camera
+        self.camera = Picamera2()
+        self.config = self.camera.create_video_configuration(
+            main={"size": resolution, "format": "BGR888"},
+            transform=Transform(hflip=True, vflip=True),
+            controls={"FrameRate": framerate}
+        )
+        self.camera.configure(self.config)
 
         # initialize the frame and the variable used to indicate
         # if the thread should be stopped
         self.frame = None
         self.stopped = False
-        #self.camera.resolution = (640, 480)
-        #self.camera.framerate = 32
-        self.camera.sharpness = 0
-        self.camera.contrast = 0
-        self.camera.brightness = 50
-        self.camera.saturation = 0
-        self.camera.ISO = 0
-        self.camera.video_stabilization = False
-        self.camera.exposure_compensation = 0
-        #self.camera.exposure_mode = 'off'
-        self.camera.awb_mode = 'flash'
-        self.camera.meter_mode = 'average'
-        self.camera.image_effect = 'none'
-        self.camera.color_effects = None
-        self.camera.rotation = 0
-        self.camera.hflip = True
-        self.camera.vflip = True
-        self.camera.crop = (0.0, 0.0, 1.0, 1.0)
+        self.lock = threading.Lock()
 
     def start(self):
         print(f'PiVideoStream.start()')
         # start the thread to read frames from the video stream
-        threading.Thread(target=self.update, args=()).start()
+        self.camera.start()
+        threading.Thread(target=self.update, args=(), daemon=True).start()
         return self
 
     def update(self):
         # keep looping infinitely until the thread is stopped
-        for f in self.stream:
-            # grab the frame from the stream and clear the stream in
-            # preparation for the next frame
-            self.frame = f.array
-            self.rawCapture.truncate(0)
+        while not self.stopped:
+            frame = self.camera.capture_array("main")
+            with self.lock:
+                self.frame = frame
 
-            # if the thread indicator variable is set, stop the thread
-            # and resource camera resources
-            if self.stopped:
-                self.stream.close()
-                self.rawCapture.close()
-                self.camera.close()
-                return
+        self.camera.stop()
+        self.camera.close()
 
     def read(self):
         # return the frame most recently read
-        return self.frame
+        with self.lock:
+            return self.frame
 
     def stop(self):
         print(f'PiVideoStream.stop()')
@@ -107,20 +93,27 @@ class PiVideoStream:
         self.stopped = True
 
     def seek(self):
-        self.rawCapture.seek(-1, 2)
+        pass
 
 
 def capture():
     global vs
+    if vs is None:
+        return None
+
     return vs.read()
 
 
-def capture_image() -> bytes:
+def capture_image() -> Optional[bytes]:
     '''
     convert narray to jpeg binary
     '''
 
-    pil_img: Image = Image.fromarray(capture())
+    frame = capture()
+    if frame is None:
+        return None
+
+    pil_img: Image = Image.fromarray(frame)
     buffer = BytesIO()
     pil_img.save(buffer, format='jpeg')
 
@@ -135,12 +128,16 @@ def capture_image() -> bytes:
 
 def seek():
     global vs
+    if vs is None:
+        return None
+
     return vs.seek()
 
 
 def camera_stop():
     global vs
-    vs.stop()
+    if vs is not None:
+        vs.stop()
 
 
 class Camera(Resource):
@@ -211,6 +208,9 @@ def current_img():
     print('current_img()')
     # response jpeg image
     img: bytes = capture_image()
+    if img is None:
+        return Response('sorry, cant collect camera image.', status=503)
+
     return Response(img, mimetype='image/jpeg')
 
 
@@ -262,9 +262,13 @@ def get_cpu_clock() -> float:
 def get_temperature_and_humidity():
     print('get_temperature_and_humidity()')
     try:
-        result = instance.read()
-        return result
+        with dht_lock:
+            temperature = dht_device.temperature
+            humidity = dht_device.humidity
+        return DHTReading(temperature, humidity)
 
+    except RuntimeError as e:
+        print(e)
     except Exception as e:
         print(e)
     return None
@@ -294,7 +298,7 @@ if __name__ == "__main__":
         while True:
             # メインスレッドでapp.run()すると、flaskによって？作られた
             # 別プロセス？でもう一度PiVideoStreamのinitが呼ばれてしまう。
-            # メインスレッドで起動しているPiVideoStreamによってPiCameraはすでにopenされているので
+            # メインスレッドで起動しているPiVideoStreamによってPicamera2はすでにopenされているので
             # flask側で作られたPiVideoStreamはカメラにアクセスできない。
             # flaskを明示的に別スレッドで立ち上げることでflaskのよくわからない別プロセスが起動するのを
             # 抑止できたのでとりあえずの回避策とする。
@@ -303,4 +307,4 @@ if __name__ == "__main__":
         print(e)
     finally:
         camera_stop()
-        GPIO.cleanup()
+        dht_device.exit()

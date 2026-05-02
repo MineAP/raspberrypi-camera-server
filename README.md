@@ -13,22 +13,33 @@ FlaskとFlask-RESTfulを使ったラズパイカメラの画像をHTTPで公開�
 
 ### ソフトウェア
 
-- Raspbian GNU/Linux 10 (buster)
-- Python 3.7
-  
-## 依存モジュール
+- Debian GNU/Linux 13 (trixie)
+- Python 3.13.5
+
+### venv 導入
+
+venv導入＆仮想環境に入る
+
+    > python -m venv --system-site-packages env
+    > source env/bin/activate
+
+仮想環境を抜ける
+
+    > deactivate
+
+## 依存ライブラリ・モジュール
+
+### apt
+
+    > sudo apt install -y swig liblgpio-dev libcap-dev python3-picamera2  python3-libcamera libcamera-apps-lite libgpiod-dev
 
 ### pip3
 
-- Flask==1.1.1
-- Flask-RESTful==0.3.7
-- picamera==1.13
-- Pillow==7.0.0
-- RPi.GPIO=0.7.0
+    > pip install -r requirements.txt
 
-### git submodule
+or 
 
-- https://github.com/MineAP/DHT22_Python
+    > pip install Flask Flask-RESTful Pillow rpi-lgpio picamera2 adafruit-circuitpython-dht gpiod
 
 ## 起動方法
 
@@ -86,4 +97,3 @@ FlaskとFlask-RESTfulを使ったラズパイカメラの画像をHTTPで公開�
             "room_humidity": 26.6
         }
     }
-
