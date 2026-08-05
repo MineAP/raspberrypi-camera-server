@@ -100,3 +100,4 @@ ENV/
 
 
 tmp.jpg
+.DS_Store
